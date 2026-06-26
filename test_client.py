@@ -6,24 +6,24 @@ import wave
 import websockets
 
 CHUNK_SIZE = 4096
-SERVER_URI = "ws://127.0.0.1:8000/ws/audio/test-client-1"
+SAMPLE_RATE = 16000  # matches the fake/wav audio we generate below
+SERVER_URI = f"ws://127.0.0.1:8000/ws/audio/test-client-1?sample_rate={SAMPLE_RATE}"
 
 
-def load_audio_bytes(path: str | None) -> bytes:
+def load_audio_bytes(path):
     if path:
         with wave.open(path, "rb") as wf:
             return wf.readframes(wf.getnframes())
-    # No file given: fake 5 seconds of 16-bit mono noise at 16kHz
-    return os.urandom(16000 * 2 * 5)
+    return os.urandom(SAMPLE_RATE * 2 * 5)  # 5 seconds of fake 16-bit mono noise
 
 
-async def stream_audio(path: str | None):
+async def stream_audio(path):
     audio_bytes = load_audio_bytes(path)
     async with websockets.connect(SERVER_URI) as ws:
-        print(f"Connected. Streaming {len(audio_bytes)} bytes...")
+        print(f"Connected. Streaming {len(audio_bytes)} bytes at {SAMPLE_RATE}Hz...")
         for i in range(0, len(audio_bytes), CHUNK_SIZE):
             await ws.send(audio_bytes[i:i + CHUNK_SIZE])
-            await asyncio.sleep(0.05)  # simulate real-time pacing
+            await asyncio.sleep(0.05)
         print("Done.")
 
 
