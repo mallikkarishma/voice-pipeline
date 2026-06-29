@@ -3,10 +3,14 @@ import logging
 from contextlib import asynccontextmanager
 
 import numpy as np
+from dotenv import load_dotenv
 from fastapi import FastAPI, Query, WebSocket, WebSocketDisconnect
 
 from app.dsp import AudioDSPPipeline
 from app.transcriber import Transcriber
+from app.intent_parser import IntentParser
+
+load_dotenv()
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("voice-pipeline")
@@ -21,6 +25,7 @@ TRANSCRIBE_WINDOW_SECONDS = 3
 TRANSCRIBE_WINDOW_SAMPLES = 16000 * TRANSCRIBE_WINDOW_SECONDS
 
 transcriber = None
+intent_parser = None
 
 
 async def audio_consumer():
@@ -29,13 +34,13 @@ async def audio_consumer():
         client_id, chunk = await audio_queue.get()
         pipeline = client_pipelines.get(client_id)
         if pipeline is None:
-            logger.warning(f"No DSP pipeline for client={client_id}, dropping chunk")
+            logger.debug(f"No DSP pipeline for client={client_id}, dropping chunk")
             audio_queue.task_done()
             continue
 
         tensor = pipeline.process(chunk)
         peak = float(np.max(np.abs(tensor))) if tensor.size else 0.0
-        logger.info(
+        logger.debug(
             f"[dsp] client={client_id} in_samples={len(chunk) // 2} "
             f"out_samples={tensor.shape[0]} peak={peak:.3f} "
             f"queue_depth={audio_queue.qsize()}"
@@ -53,6 +58,8 @@ async def audio_consumer():
             text = await loop.run_in_executor(None, transcriber.transcribe, window_audio)
             if text:
                 logger.info(f"[transcript] client={client_id}: {text}")
+                intent_result = await loop.run_in_executor(None, intent_parser.parse, text)
+                logger.info(f"[intent] client={client_id}: {intent_result}")
             else:
                 logger.info(f"[transcript] client={client_id}: (silence/no speech detected)")
 
@@ -61,8 +68,9 @@ async def audio_consumer():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global transcriber
+    global transcriber, intent_parser
     transcriber = Transcriber()
+    intent_parser = IntentParser()
     consumer_task = asyncio.create_task(audio_consumer())
     logger.info("Audio consumer started.")
     yield
